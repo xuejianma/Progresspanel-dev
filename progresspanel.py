@@ -50,6 +50,19 @@ class Progresspanel(ttk.Frame):
         self.set_verbose(verbose)
         self._time_per_iteration = 0
         self._create_widgets()
+        self._halt_resumed = False
+        self._iteration_timestamp = None
+
+    def is_halt_resumed(self):
+        """
+        Check whether a thread is resumed just after it was paused. It returns True if
+        the thread is just resumed after it was paused, until the next iteration. It
+        returns False otherwise. This is useful for user to repeat the current iteration
+        after the work was paused and resumed, especially when the user configured to 
+        jumped some time-comsuming operations in the task() after the pause button was 
+        clicked using is_pausing_or_terminating().
+        """
+        return self._halt_resumed
 
     def set_total(self, total):
         """
@@ -166,7 +179,7 @@ class Progresspanel(ttk.Frame):
         remaining_time = int(self._time_per_iteration * (self.total - self.i))
         if self.status == Status.TERMINATED:
             return "Ready"
-        return "Running: {}/{}. Time left: {}".format(self.i + 1, self.total, timedelta(seconds=remaining_time) if remaining_time > 0 else "--:--:--")
+        return "Round: {}/{}. Time left: {}".format(self.i + 1, self.total, timedelta(seconds=remaining_time) if remaining_time > 0 else "--:--:--")
 
     def _start(self):
         """
@@ -176,54 +189,100 @@ class Progresspanel(ttk.Frame):
             if self.status != Status.PAUSED:
                 self._label_status.config(text=self._get_progress_notice())
                 self.after_started()
+                self.status = Status.RUNNING
+                thread = Thread(target=self._task_loop)
+                thread.start()
             else:
+                self._halt_resumed = True
                 self.after_resumed()
-            self.status = Status.RUNNING
+                self.status = Status.RUNNING
             self._progress_bar["value"] = self.i / self.total * 100
             self._button_start["state"] = "disabled"
             self._button_pause["state"] = "normal"
             self._button_terminate["state"] = "normal"
-            thread = Thread(target=self._task_loop)
-            thread.setDaemon(True)
-            thread.start()
 
-    def _task_loop(self):
-        """
-        Loop that runs the user-customized task defined in task method.
-        """
-        try:
-            while self.status == Status.RUNNING and self.i < self.total:
-                time_start = time()
-                self._label_status.config(text=self._get_progress_notice())
-                self.task()
-                time_end = time()
-                if self.is_pausing_or_terminating():
-                    break
-                self._time_per_iteration = (
-                    self._time_per_iteration * self.i + time_end - time_start) / (self.i + 1)
-                self.i += 1
-                self._progress_bar["value"] = self.i / self.total * 100
-            if self.status == Status.RUNNING:
-                self._reset()
-                self._label_status.config(text="Done!")
-                self.after_completed()
-            elif self.status == Status.TERMINATING:
-                self._reset()
-                self.after_terminated()
-            elif self.status == Status.PAUSING:
-                self._button_start["state"] = "normal"
-                self.status = Status.PAUSED
-                self.after_paused()
-                if self.i == self.total:
-                    self._reset()
-                    self._label_status.config(text="Done!")
-        except Exception as e:
-            self._pause()
-            self._label_status.config(text="Error: {}".format(e))
+    def update(self, i):
+        curr_timestamp = time()
+        if self._iteration_timestamp is not None:
+            self._time_per_iteration = (self._time_per_iteration * self.i + curr_timestamp - self._iteration_timestamp) / (self.i + 1)
+        self._iteration_timestamp = curr_timestamp
+        self._halt_resumed = False
+        self.i = i
+        self._label_status.config(text=self._get_progress_notice())
+        self._progress_bar["value"] = self.i / self.total * 100
+        if self.status == Status.PAUSING:
+            self._iteration_timestamp = None
             self._button_start["state"] = "normal"
             self.status = Status.PAUSED
             self.after_paused()
-            raise e
+            if self.i == self.total:
+                self._reset()
+                self._label_status.config(text="Done!")
+        super().update()
+        while self.status == Status.PAUSED:
+            pass
+        if self.status == Status.TERMINATING:
+            raise Exception("Terminated")
+
+    def _task_loop(self):
+        try:
+            self.task()
+        # except Exception("Terminated"):
+        except Exception as e:
+            if e.args[0] == "Terminated":
+                self._reset()
+                self._label_status.config(text="Ready")
+                self.status = Status.TERMINATED
+                self.after_terminated()
+            else:
+                self._pause()
+                self._label_status.config(text="Error: {}".format(e))
+                self._button_start["state"] = "normal"
+                self.status = Status.PAUSED
+                self.after_paused()
+                raise e
+        else:
+            self._reset()
+            self._label_status.config(text="Ready")
+            self.after_completed()
+
+    # def _task_loop(self):
+    #     """
+    #     Loop that runs the user-customized task defined in task method.
+    #     """
+    #     try:
+    #         while self.status == Status.RUNNING and self.i < self.total:
+    #             time_start = time()
+    #             self._label_status.config(text=self._get_progress_notice())
+    #             self.task()
+    #             time_end = time()
+    #             if self.is_pausing_or_terminating():
+    #                 break
+    #             self._time_per_iteration = (
+    #                 self._time_per_iteration * self.i + time_end - time_start) / (self.i + 1)
+    #             self.i += 1
+    #             self._progress_bar["value"] = self.i / self.total * 100
+    #         if self.status == Status.RUNNING:
+    #             self._reset()
+    #             self._label_status.config(text="Done!")
+    #             self.after_completed()
+    #         elif self.status == Status.TERMINATING:
+    #             self._reset()
+    #             self.after_terminated()
+    #         elif self.status == Status.PAUSING:
+    #             self._button_start["state"] = "normal"
+    #             self.status = Status.PAUSED
+    #             self.after_paused()
+    #             if self.i == self.total:
+    #                 self._reset()
+    #                 self._label_status.config(text="Done!")
+    #     except Exception as e:
+    #         self._pause()
+    #         self._label_status.config(text="Error: {}".format(e))
+    #         self._button_start["state"] = "normal"
+    #         self.status = Status.PAUSED
+    #         self.after_paused()
+    #         raise e
 
     def _reset(self):
         """
@@ -232,6 +291,7 @@ class Progresspanel(ttk.Frame):
         self.status = Status.TERMINATED
         self.i = 0
         self._time_per_iteration = 0
+        self._iteration_timestamp = None
         self._button_terminate["state"] = "disabled"
         self._button_pause["state"] = "disabled"
         self._button_start["state"] = "normal"
@@ -251,9 +311,6 @@ class Progresspanel(ttk.Frame):
         """
         Terminate the task.
         """
-        if self.status == Status.PAUSED:
-            self.after_terminated()
-            self._reset()
         self.status = Status.TERMINATING
         self._button_pause["state"] = "disabled"
         self._button_terminate["state"] = "disabled"
