@@ -276,6 +276,8 @@ class Progresspanel(ttk.Frame):
                 self._label_status.config(text="Ready")
                 self.after_terminated()
             else:
+                if not self.task:
+                    e = Exception("Task not passed to Progresspanel.")
                 self._label_status.config(
                     text="Error at {}/{}: {}".format(self.i, self.total, e))
                 self.after_terminated()

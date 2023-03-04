@@ -45,3 +45,5 @@ class TestProgressPanel(unittest.TestCase):
         
         self.progress_panel._pause_resumed = True
         self.assertTrue(self.progress_panel.is_pause_resumed())
+
+unittest.main()

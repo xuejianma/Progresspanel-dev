@@ -8,8 +8,9 @@ progresspanel.pack()
 
 
 def task():
-    progresspanel.set_total(10)
-    for i in range(10):
+    total = 10
+    progresspanel.set_total(total)
+    for i in range(total):
         progresspanel.update(i)
         sleep(1)
 
